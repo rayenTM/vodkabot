@@ -1,3 +1,8 @@
+# Ignore the virtual environment
 venv/
+
+# Ignore sensitive credentials
 .env
-discord.log
+
+# Ignore local logs (you don't want old logs on GitHub)
+*.log
