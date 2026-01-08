@@ -4,4 +4,4 @@ services:
     container_name: vodka-bot
     restart: always
     environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN} # Portainer will inject this from its U
+      - DISCORD_TOKEN=${DISCORD_TOKEN} # Portainer will inject this from its UI
