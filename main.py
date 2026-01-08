@@ -15,6 +15,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='/', intents=intents)
 
+### Bot Startup Commands ###
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
@@ -24,9 +25,17 @@ async def on_ready():
     except Exception as e:
         print(e)
 
+### Member Join and Leave Events ###
+
 @bot.event
 async def on_member_join(member):
     await member.send(f"Welcome to the server, {member.name}!")
+
+@bot.event
+async def on_member_remove(member):
+    await member.send(f"Goodbye, {member.name}!")
+
+### Hybrid Commands ###
 
 @bot.hybrid_command()
 async def test(ctx):

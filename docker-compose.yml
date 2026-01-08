@@ -1,0 +1,7 @@
+services:
+  bot:
+    build: .
+    container_name: vodka-bot
+    restart: always
+    env_file:
+      - .env
