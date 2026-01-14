@@ -1,12 +1,22 @@
-import discord
-from discord.ext import commands
+import asyncio
 import logging
-from dotenv import load_dotenv
 import os
+import random
+
+import discord
+import discord.utils
+from discord import app_commands
+from discord.ext import commands
+from dotenv import load_dotenv
 
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
+channel_id = int(os.getenv('WELCOME_CHANNEL_ID'))
+secret_role = os.getenv('SECRET_ROLE')
+owner_id = os.getenv('OWNER_ID')
+guild_id = int(os.getenv('GUILD_ID'))
+suggestion_channel_id = int(os.getenv('SUGGESTION_CHANNEL_ID'))
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 intents = discord.Intents.default()
@@ -15,7 +25,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='/', intents=intents)
 
+###
 ### Bot Startup Commands ###
+###
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
@@ -25,60 +37,124 @@ async def on_ready():
     except Exception as e:
         print(e)
 
-### Member Join and Leave Events ###
 
+###
+### Member Events ###
+###
 @bot.event
 async def on_member_join(member):
-    await member.send(f"Welcome to the server, {member.name}!")
+    channel = bot.get_channel(channel_id)
+    if channel:
+        await channel.send(f"Welcome to the server, {member.mention}!")
+    else:
+        print(f"Error: Could not find channel {channel_id}. Check the ID!")
 
 @bot.event
 async def on_member_remove(member):
-    await member.send(f"Goodbye, {member.name}!")
-
-### Hybrid Commands ###
-
-@bot.hybrid_command()
-async def test(ctx):
-    await ctx.send("This is a hybrid command!")
+    channel = bot.get_channel(channel_id)
+    if channel:
+        await channel.send(f"Goodbye, {member.mention}!")
 
 
 
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-    if "i love vodka" in message.content.lower():
-        await message.channel.send(f"i love vodka too {message.author.mention}!")
-    elif "i hate vodka" in message.content.lower():
-        await message.delete()
-        await message.channel.send(f"what are you talking about, {message.author.mention}!")
-    await bot.process_commands(message) # Needed, or else the commands won't work
-
-
-secret_role = "Admin"
-
-@bot.hybrid_command()
-@commands.has_role(secret_role)
-async def secret(ctx):
-    """This command checks if you have the required secret role.""" # This describes the command on client interface
-    await ctx.send("You have the secret role!")
-
-@bot.hybrid_command()
-@commands.has_role(secret_role)
-async def ping(ctx):
-    """
-    Sends the bot's latency (ping) in milliseconds.
-
-    This command is useful for checking the bot's reaction time and connection status.
-    """
-    latency_ms = round(bot.latency * 1000)
-    await ctx.send(f'🏓 {latency_ms} ms.')
-
-
-@bot.command() # Testing command to see if it works
-async def foo(ctx, arg):
-    await ctx.send(arg)
+###
+### Roll Dice Command ###
+###
+@bot.tree.command(name="roll", description="Roll a specific die")
+@app_commands.choices(sides=[
+    app_commands.Choice(name="d4", value=4),
+    app_commands.Choice(name="d6", value=6),
+    app_commands.Choice(name="d8", value=8),
+    app_commands.Choice(name="d10", value=10),
+    app_commands.Choice(name="d12", value=12),
+    app_commands.Choice(name="d20", value=20),
+    app_commands.Choice(name="d100", value=100),
+])
+async def roll(interaction: discord.Interaction, sides: app_commands.Choice[int]):
+    # Generate the random roll result
+    result = random.randint(1, sides.value)
+    
+    # Send a formatted response back to the user
+    await interaction.response.send_message(
+        f"🎲 {interaction.user.mention} rolled a **{sides.name}** and got: **{result}**!"
+    )
 
 
 
-bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+
+###
+### About Command ### THIS PROBABLY ISNT PEP COMPLIANT BUT THATS OKAY
+###
+@bot.tree.command(name="about", description="Details bot version and author")
+async def about(interaction: discord.Interaction):
+
+    # embed = discord.Embed(title="About", description="This is a test bot created by Rayen/Akina.", color=discord.Color.green())
+    channel_url = f"https://discord.com/channels/{guild_id}/{suggestion_channel_id}"
+    
+    embed = discord.Embed(
+        title="Vodka(Bot) ver. 1.0",
+        description="I am Vodka! Ready to go full throttle?",
+        color=discord.Color.blue() # You can also use a hex value, e.g., 0x00ff00
+    )
+
+    # Add fields
+    # Fetch owner from environment variable
+    owner_id_str = os.getenv('OWNER_ID')
+    
+    if owner_id_str:
+        try:
+            # fetch_user makes an API call to get the user even if they aren't in the cache
+            creator = await interaction.client.fetch_user(int(owner_id_str))
+            embed.set_author(name=creator.name, icon_url=creator.avatar.url)
+        except Exception:
+             # Fallback if ID is invalid or user not found
+             embed.set_author(name="Rayen/Akina", icon_url=None)
+    else:
+        embed.set_author(name="Rayen/Akina", icon_url=None)
+
+    embed.add_field(name="Main Features", value="* Welcome/Leave Messages\n* Dice Roller\n* Replies to certain messages!", inline=False)
+    embed.add_field(name="Upcoming Features", value="* Umadle (Umawordle) \n* And other fun games!", inline=False)
+    embed.add_field(name="GitHub", value=f"[Made using Python, Git, and Docker!](https://github.com/rayenTM/vodkabot)\n* Feel free to make suggestions [here]({channel_url})!", inline=False)
+
+
+    embed.set_thumbnail(url="https://preview.redd.it/vodka-deserve-better-spotlight-position-in-the-anime-game-v0-3mxt0waxb6tf1.png?auto=webp&s=0b7eaa7490ccaebe659b7ef1860838fb642c6b22") # Replace with a valid image URL
+    embed.set_image(url="https://upload.wikimedia.org/wikipedia/commons/1/15/Vodka%28horse%29_20070527R1.jpg") # Replace with a valid image URL=
+    embed.set_footer(
+        text="Did you know? I love horses! So you also have the real Vodka here too since I'm the developer. 🐴",
+        icon_url="https://gametora.com/images/umamusume/characters/chara_stand_1009_100901.png" # Optional: URL for a footer icon
+    )
+
+    # Send the embed to the channel
+    await interaction.response.send_message(embed=embed)
+
+
+
+
+###
+### Load Cogs ###
+###
+async def load():
+    for filename in os.listdir('./cogs'):
+        if filename.endswith('.py'):
+            await bot.load_extension(f'cogs.{filename[:-3]}')
+
+
+
+
+###
+### Main Function ###
+###
+async def main():
+
+    discord.utils.setup_logging(handler=handler, level=logging.DEBUG)
+
+    async with bot:
+        await load()
+        await bot.start(token)
+
+
+
+
+
+### Run Bot ###
+asyncio.run(main())

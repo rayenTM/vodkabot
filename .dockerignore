@@ -3,3 +3,4 @@ venv/
 *.log
 .git/
 __pycache__/
+notes.txt
