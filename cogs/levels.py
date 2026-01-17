@@ -40,17 +40,6 @@ class Levels(commands.Cog):
                 PRIMARY KEY (user_id, guild_id)
             )
         """)
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
         
         # Create table for level rewards
         await self.db.execute("""
@@ -62,16 +51,6 @@ class Levels(commands.Cog):
             )
         """)
         
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
         await self.db.commit()
         print("Levels Cog: Database connected and table verified.")
 
@@ -90,23 +69,7 @@ class Levels(commands.Cog):
             return
         
         # 2. Ignore DMs
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-        if not yet_in_guild := message.guild:
-=======
         if not message.guild:
->>>>>>> Stashed changes
-=======
-        if not message.guild:
->>>>>>> Stashed changes
-=======
-        if not message.guild:
->>>>>>> Stashed changes
-=======
-        if not message.guild:
->>>>>>> Stashed changes
             return
 
         # 3. Add XP
@@ -147,17 +110,6 @@ class Levels(commands.Cog):
                     # Notify the user
                     await message.channel.send(f"🎉 {message.author.mention} has leveled up to **Level {new_level}**!")
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
                     # Check for Role Rewards
                     async with self.db.execute("SELECT role_id FROM level_rewards WHERE guild_id = ? AND level = ?", (message.guild.id, new_level)) as cursor:
                         reward_row = await cursor.fetchone()
@@ -173,16 +125,6 @@ class Levels(commands.Cog):
                                 except discord.HTTPException:
                                     pass # Ignore other errors for now
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     # --- Commands ---
 
     @app_commands.command(name="rank", description="Check your current rank and XP")
@@ -291,17 +233,6 @@ class Levels(commands.Cog):
 
         await interaction.followup.send(f"✅ Sync Complete! Updated XP for {count_updated} users based on {limit} messages.\nUsers might level up on their next message!")
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     # --- Level Management Commands ---
     
     level_group = app_commands.Group(name="level", description="Manage level rewards")
@@ -427,15 +358,5 @@ class Levels(commands.Cog):
         
         await interaction.response.send_message(f"✅ Set {member.mention} to **Level {level}** (XP set to {required_xp}).", ephemeral=True)
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 async def setup(bot):
     await bot.add_cog(Levels(bot))
