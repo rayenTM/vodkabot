@@ -7,8 +7,11 @@ venv/
 # Ignore local logs (you don't want old logs on GitHub)
 *.log
 
-# Ignore notes.txt file
-notes.txt
-
 # Ignore compiled python files
 __pycache__/
+
+# Ignore data directory
+data/
+
+# Ignore notes.txt file
+notes.txt

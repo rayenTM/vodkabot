@@ -10,3 +10,5 @@ services:
       - OWNER_ID=${OWNER_ID}
       - GUILD_ID=${GUILD_ID}
       - SUGGESTION_CHANNEL_ID=${SUGGESTION_CHANNEL_ID}
+    volumes:
+      - ./data:/app/data

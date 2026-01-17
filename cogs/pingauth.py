@@ -23,15 +23,16 @@ class PingAuth(commands.Cog):
             return False
     
 
-    @app_commands.command(name="ping", description="Sends the bot's latency (ping) in milliseconds. Requires Admin Role.")
-    async def ping(self, interaction: discord.Interaction):
-        """
-        Sends the bot's latency (ping) in milliseconds. Requires Admin Role.
-
-    This command is useful for checking the bot's reaction time and connection status.
-    """
-        ping_embed = discord.Embed(title="Ping", description=f"🏓 {round(self.bot.latency * 1000)} ms.", color=discord.Color.green())
-        await interaction.response.send_message(embed=ping_embed)
+    # --- DEPRECATED: Replaced by Admin Panel ---
+    # @app_commands.command(name="ping", description="Sends the bot's latency (ping) in milliseconds. Requires Admin Role.")
+    # async def ping(self, interaction: discord.Interaction):
+    #     """
+    #     Sends the bot's latency (ping) in milliseconds. Requires Admin Role.
+    # 
+    # This command is useful for checking the bot's reaction time and connection status.
+    # """
+    #     ping_embed = discord.Embed(title="Ping", description=f"🏓 {round(self.bot.latency * 1000)} ms.", color=discord.Color.green())
+    #     await interaction.response.send_message(embed=ping_embed)
 
 async def setup(bot):
     await bot.add_cog(PingAuth(bot))

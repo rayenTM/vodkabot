@@ -53,7 +53,7 @@ async def on_member_join(member):
 async def on_member_remove(member):
     channel = bot.get_channel(channel_id)
     if channel:
-        await channel.send(f"Goodbye, {member.mention}!")
+        await channel.send(f"Goodbye, {member.display_name}!")
 
 
 
@@ -92,7 +92,7 @@ async def about(interaction: discord.Interaction):
     channel_url = f"https://discord.com/channels/{guild_id}/{suggestion_channel_id}"
     
     embed = discord.Embed(
-        title="Vodka(Bot) ver. 1.0",
+        title="Vodka(Bot) ver. 1.5 BETA",
         description="I am Vodka! Ready to go full throttle?",
         color=discord.Color.blue() # You can also use a hex value, e.g., 0x00ff00
     )
