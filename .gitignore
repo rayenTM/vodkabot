@@ -13,5 +13,13 @@ notes.txt
 # Ignore compiled python files
 __pycache__/
 
+<<<<<<< Updated upstream
 # Ignore docs folder
 docs/
+=======
+# Ignore data directory
+data/
+
+# Ignore notes.txt file
+notes.txt
+>>>>>>> Stashed changes
