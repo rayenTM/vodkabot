@@ -14,12 +14,19 @@ notes.txt
 __pycache__/
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 # Ignore docs folder
 docs/
 =======
+=======
+>>>>>>> Stashed changes
 # Ignore data directory
 data/
 
 # Ignore notes.txt file
+<<<<<<< Updated upstream
+notes.txt
+>>>>>>> Stashed changes
+=======
 notes.txt
 >>>>>>> Stashed changes
