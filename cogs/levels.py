@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import aiosqlite
 import os
+import time
 
 # Database file path
 DB_FILE = "/app/data/levels.db" if os.path.exists("/app/data") else "./data/levels.db"
@@ -11,6 +12,23 @@ class Levels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = None
+        self.cooldowns = {} # user_id -> timestamp
+
+    def get_xp_for_next_level(self, current_level: int) -> int:
+        """
+        Quadratic Formula: 5 * (L^2) + 50 * L + 100
+        L=1 -> 155
+        L=2 -> 220
+        L=10 -> 1100
+        """
+        return 5 * (current_level ** 2) + 50 * current_level + 100
+
+    def get_total_xp_for_level(self, target_level: int) -> int:
+        """Sum of XP needed for all levels up to target_level - 1"""
+        total = 0
+        for i in range(1, target_level):
+            total += self.get_xp_for_next_level(i)
+        return total
 
     # --- Public Admin Methods (API) ---
 
@@ -29,9 +47,7 @@ class Levels(commands.Cog):
 
     async def admin_set_level(self, user_id: int, guild_id: int, level: int):
         """Sets a user's level and resets XP to minimum for that level."""
-        required_xp = 0
-        for i in range(1, level):
-            required_xp += i * 100
+        required_xp = self.get_total_xp_for_level(level)
             
         await self.db.execute("""
             INSERT INTO users (user_id, guild_id, xp, level)
@@ -142,6 +158,15 @@ class Levels(commands.Cog):
         if not message.guild:
             return
 
+        # --- Cooldown Check ---
+        now = time.time()
+        last_xp = self.cooldowns.get(message.author.id, 0)
+        if now - last_xp < 10: # 10 seconds cooldown
+            return
+            
+        self.cooldowns[message.author.id] = now
+        # ----------------------
+
         # 3. Add XP
         # We award 10 XP per message for this prototype.
         xp_gain = 10
@@ -166,9 +191,8 @@ class Levels(commands.Cog):
                 current_xp = row['xp']
                 current_level = row['level']
                 
-                # Formula: Level up if XP > current_level * 100
-                # E.g. Level 1 needs 100 XP. Level 2 needs 200 XP to get to 3, etc.
-                next_level_xp = current_level * 100
+                # Formula: Quadratic Scaling
+                next_level_xp = self.get_xp_for_next_level(current_level)
                 
                 if current_xp >= next_level_xp:
                     new_level = current_level + 1
@@ -212,9 +236,13 @@ class Levels(commands.Cog):
         if row:
             xp = row['xp']
             level = row['level']
+            
+            # Show progress to next level
+            next_xp_req = self.get_xp_for_next_level(level)
+            
             embed = discord.Embed(title=f"Rank: {target.display_name}", color=discord.Color.blue())
             embed.add_field(name="Level", value=str(level), inline=True)
-            embed.add_field(name="Total XP", value=str(xp), inline=True)
+            embed.add_field(name="Total XP", value=f"{xp} / {next_xp_req} (Next Level)", inline=True)
             embed.set_thumbnail(url=target.avatar.url if target.avatar else None)
             await interaction.response.send_message(embed=embed)
         else:
@@ -250,7 +278,7 @@ class Levels(commands.Cog):
             
         embed.description = description
         await interaction.response.send_message(embed=embed)
-
+    
     # --- DEPRECATED: Replaced by Admin Panel ---
     
     # @app_commands.command(name="sync_xp", description="[Admin] Scan chat history to backfill XP")
