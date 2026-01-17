@@ -42,7 +42,10 @@ class Levels(commands.Cog):
         """)
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
         
@@ -57,6 +60,9 @@ class Levels(commands.Cog):
         """)
         
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
@@ -80,7 +86,11 @@ class Levels(commands.Cog):
         # 2. Ignore DMs
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         if not yet_in_guild := message.guild:
+=======
+        if not message.guild:
+>>>>>>> Stashed changes
 =======
         if not message.guild:
 >>>>>>> Stashed changes
@@ -129,7 +139,10 @@ class Levels(commands.Cog):
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
                     # Check for Role Rewards
@@ -148,6 +161,9 @@ class Levels(commands.Cog):
                                     pass # Ignore other errors for now
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
@@ -261,7 +277,10 @@ class Levels(commands.Cog):
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     # --- Level Management Commands ---
@@ -390,6 +409,9 @@ class Levels(commands.Cog):
         await interaction.response.send_message(f"✅ Set {member.mention} to **Level {level}** (XP set to {required_xp}).", ephemeral=True)
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
