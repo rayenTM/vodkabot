@@ -1,18 +1,19 @@
-# VodkaDiscordPy (VodkaBot)
+# VodkaDiscordPy (VodkaBot) v2.0
 
-A feature-rich Discord bot built with `discord.py`, designed for fun and server utility.
+A feature-rich Discord bot built with `discord.py`, designed for fun, server utility, and community engagement.
 
 ## Features
 
-- **Welcome & Leave Messages**: Automatically greets new members and bids farewell to those who leave.
-- **Dice Roller**: Roll various dice (d4, d6, d8, d10, d12, d20, d100) with the `/roll` command.
-- **Role Management**: Interactive menu for users to self-assign color roles and hobby roles.
-- **Admin Tools**:
-    - `/ping`: Check bot latency (Admin only).
-    - `/rolemenu`: Spawn the role selection menu (Admin only).
+- **Leveling System**: XP tracking, level-up notifications, and configurable role rewards.
+- **Minigames**:
+    - **Horsele**: A horse-themed Wordle-style guessing game (`/horsele`).
+    - **Dice Roller**: Roll various dice (d4-d100) with `/roll`.
+- **Role Management**: Interactive menus for users to self-assign color roles, pronouns, and hobby roles.
+- **Admin Dashboard**: Centralized control panel (`/admin`) to manage bot settings, levels, and roles.
+- **Welcome & Leave Messages**: Automatically greets new members and bids farewell.
 - **Fun Commands**:
     - `/secret`: Check for secret role ownership.
-    - Context-aware replies (e.g., mention "i love vodka").
+    - Context-aware replies.
 - **About Command**: `/about` displays bot information and credits.
 
 ## Setup Instructions
@@ -76,11 +77,14 @@ A feature-rich Discord bot built with `discord.py`, designed for fun and server 
 
 ## Project Structure
 
-- `main.py`: Entry point of the bot. Handles startup, event listeners, and global commands.
-- `cogs/`: Directory containing Cog extensions.
-    - `pingauth.py`: Latency command with role-based restrictions.
-    - `roles.py`: Persistent role assignment view (Self-assignable roles).
-    - `testcommands.py`: Experimental and secret commands.
-- `docs/`: Detailed documentation for specific components.
+- `main.py`: Entry point. Handles startup and global commands.
+- `cogs/`:
+    - `admin_menu.py`: Centralized admin dashboard.
+    - `levels.py`: Leveling system and XP logic.
+    - `roles.py`: Persistent role assignment views.
+    - `horsele.py`: Horse Wordle minigame.
+    - `pingauth.py`: Latency command (legacy admin tools).
+    - `testcommands.py`: Experimental commands.
+- `docs/`: Detailed documentation.
 
 For more details on the Cogs, see [Cogs Documentation](docs/cogs.md).
