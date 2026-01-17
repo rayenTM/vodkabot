@@ -1,0 +1,211 @@
+import discord
+from discord.ext import commands
+from discord import app_commands
+import aiosqlite
+import os
+
+# Database file path
+DB_FILE = "/app/data/levels.db" if os.path.exists("/app/data") else "./data/levels.db"
+
+class Levels(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.db = None
+
+    async def cog_load(self):
+        """
+        Called when the Cog is loaded. We set up the database here.
+        This is an Async operation, which is why we use aiosqlite.
+        """
+        # Connect to the SQLite database
+        # This creates the file if it doesn't exist.
+        self.db = await aiosqlite.connect(DB_FILE)
+        
+        # Enable row factory to get results as accessible objects/dicts instead of just tuples
+        self.db.row_factory = aiosqlite.Row
+
+        # Create the table if it doesn't exist
+        # CHECK: We use IF NOT EXISTS so this is safe to run every time.
+        # columns:
+        #   user_id: The Discord User ID (Primary Key - must be unique)
+        #   guild_id: The Server ID (Composite key with user usually, but for simplicity we filter by it)
+        #   xp: Total experience points
+        #   level: Current level
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER,
+                guild_id INTEGER,
+                xp INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
+        await self.db.commit()
+        print("Levels Cog: Database connected and table verified.")
+
+    async def cog_unload(self):
+        """Close the database connection when the Cog is unloaded"""
+        if self.db:
+            await self.db.close()
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """
+        Listen to every message to award XP.
+        """
+        # 1. Ignore bots (including ourselves) to prevent infinite loops
+        if message.author.bot:
+            return
+        
+        # 2. Ignore DMs
+        if not yet_in_guild := message.guild:
+            return
+
+        # 3. Add XP
+        # We award 10 XP per message for this prototype.
+        xp_gain = 10
+        
+        # SQL: UPSERT (Insert or Update)
+        # We try to Insert the user. If they exist (Conflict on Primary Key), we just Update their XP.
+        cursor = await self.db.execute("""
+            INSERT INTO users (user_id, guild_id, xp, level)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
+        """, (message.author.id, message.guild.id, xp_gain, xp_gain))
+        
+        # 4. Check for Level Up
+        # Just for efficiency, we only fetch the new values to check level up
+        await self.db.commit()
+        
+        async with self.db.execute("""
+            SELECT xp, level FROM users WHERE user_id = ? AND guild_id = ?
+        """, (message.author.id, message.guild.id)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                current_xp = row['xp']
+                current_level = row['level']
+                
+                # Formula: Level up if XP > current_level * 100
+                # E.g. Level 1 needs 100 XP. Level 2 needs 200 XP to get to 3, etc.
+                next_level_xp = current_level * 100
+                
+                if current_xp >= next_level_xp:
+                    new_level = current_level + 1
+                    await self.db.execute("""
+                        UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?
+                    """, (new_level, message.author.id, message.guild.id))
+                    await self.db.commit()
+                    
+                    # Notify the user
+                    await message.channel.send(f"🎉 {message.author.mention} has leveled up to **Level {new_level}**!")
+
+    # --- Commands ---
+
+    @app_commands.command(name="rank", description="Check your current rank and XP")
+    async def rank(self, interaction: discord.Interaction, member: discord.Member = None):
+        """
+        Fetch data from SQLite and display it.
+        """
+        target = member or interaction.user
+        
+        async with self.db.execute("""
+            SELECT xp, level FROM users WHERE user_id = ? AND guild_id = ?
+        """, (target.id, interaction.guild.id)) as cursor:
+            row = await cursor.fetchone()
+            
+        if row:
+            xp = row['xp']
+            level = row['level']
+            embed = discord.Embed(title=f"Rank: {target.display_name}", color=discord.Color.blue())
+            embed.add_field(name="Level", value=str(level), inline=True)
+            embed.add_field(name="Total XP", value=str(xp), inline=True)
+            embed.set_thumbnail(url=target.avatar.url if target.avatar else None)
+            await interaction.response.send_message(embed=embed)
+        else:
+            await interaction.response.send_message(f"❌ {target.display_name} hasn't sent any messages yet!", ephemeral=True)
+
+    @app_commands.command(name="leaderboard", description="Show the top 10 chatters")
+    async def leaderboard(self, interaction: discord.Interaction):
+        """
+        SQL makes sorting easy using 'ORDER BY'.
+        """
+        async with self.db.execute("""
+            SELECT user_id, xp, level FROM users 
+            WHERE guild_id = ? 
+            ORDER BY xp DESC 
+            LIMIT 10
+        """, (interaction.guild.id,)) as cursor:
+            rows = await cursor.fetchall()
+            
+        if not rows:
+            await interaction.response.send_message("No data yet!", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="🏆 Server Leaderboard", color=discord.Color.gold())
+        description = ""
+        
+        for index, row in enumerate(rows, start=1):
+            user_id = row['user_id']
+            # We try to fetch member from cache mainly
+            member = interaction.guild.get_member(user_id)
+            name = member.display_name if member else f"User {user_id}"
+            
+            description += f"**{index}. {name}** - Lvl {row['level']} ({row['xp']} XP)\n"
+            
+        embed.description = description
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="sync_xp", description="[Admin] Scan chat history to backfill XP")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sync_xp(self, interaction: discord.Interaction, limit: int = 1000):
+        """
+        This is a 'Migration' script essentially.
+        It scans the current channel history and awards XP retroactively.
+        """
+        await interaction.response.send_message(f"🔄 Starting sync... Scanning last {limit} messages. This might take a moment.", ephemeral=True)
+        
+        # 1. Count messages per user in memory first (to reduce DB writes)
+        user_counts = {}
+        
+        # interaction.channel is where the command was run
+        async for message in interaction.channel.history(limit=limit):
+            if message.author.bot:
+                continue
+            
+            uid = message.author.id
+            user_counts[uid] = user_counts.get(uid, 0) + 1
+            
+        if not user_counts:
+            await interaction.followup.send("No valid user messages found in the recent history.")
+            return
+
+        # 2. Bulk Update Database
+        count_updated = 0
+        
+        # We process each user found
+        for user_id, count in user_counts.items():
+            xp_to_add = count * 10
+            
+            # Same UPSERT logic
+            await self.db.execute("""
+                INSERT INTO users (user_id, guild_id, xp, level)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
+            """, (user_id, interaction.guild.id, xp_to_add, xp_to_add))
+            
+            count_updated += 1
+
+        # 3. Recalculate Levels for everyone (Bulk Fix)
+        # Simple formula update: Set level based on total XP
+        # E.g. Level = floor(xp / 100) + 1 roughly, but for our logic:
+        # We iterate and check manually or use a math formula if SQL supports it well.
+        # For prototype, let's just commit the XP. Level up will happen on next message 
+        # OR we can run a quick check now.
+        
+        # Let's simple commit for now
+        await self.db.commit()
+
+        await interaction.followup.send(f"✅ Sync Complete! Updated XP for {count_updated} users based on {limit} messages.\nUsers might level up on their next message!")
+
+async def setup(bot):
+    await bot.add_cog(Levels(bot))
