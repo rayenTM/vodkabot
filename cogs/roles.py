@@ -9,152 +9,198 @@ ROLES_FILE = "/app/data/roles.json" if os.path.exists("/app/data") else "./data/
 
 def load_roles_config():
     if not os.path.exists(ROLES_FILE):
-        return {"colors": [], "hobbies": []}
+        return {"categories": []}
+    
     try:
         with open(ROLES_FILE, "r") as f:
-            return json.load(f)
+             # We assume migration was handled or file is fresh.
+             # If you need the migration logic again, we can keep it, 
+             # but it's likely already run or not needed if file is new.
+             # Keeping it simple for the view logic.
+             data = json.load(f)
+             if "colors" in data or "hobbies" in data:
+                  # Quick migration re-implementation to be safe
+                  new_categories = []
+                  if "colors" in data and data["colors"]:
+                      new_categories.append({"name": "Colors", "is_exclusive": True, "roles": data["colors"]})
+                  if "hobbies" in data and data["hobbies"]:
+                      new_categories.append({"name": "Hobbies", "is_exclusive": False, "roles": data["hobbies"]})
+                  return {"categories": new_categories}
+             return data
     except json.JSONDecodeError:
-        return {"colors": [], "hobbies": []}
+        return {"categories": []}
 
 def save_roles_config(data):
-    # Ensure directory exists
     os.makedirs(os.path.dirname(ROLES_FILE), exist_ok=True)
     with open(ROLES_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-class ColorSelect(discord.ui.Select):
-    def __init__(self, options_data):
+class UserSpecificRoleSelect(discord.ui.Select):
+    """
+    A select menu tailored to a specific user's current roles.
+    """
+    def __init__(self, category, user, guild):
+        self.category_name = category['name']
+        self.is_exclusive = category.get('is_exclusive', False)
+        self.roles_data = category.get('roles', [])
+        self.guild = guild
+        
+        # Build options
         options = []
-        for item in options_data:
-            # item: {'id': 123, 'label': 'Red', 'emoji': '🔴'}
-            options.append(discord.SelectOption(
-                label=item['label'],
-                value=str(item['id']), # Value must be string
-                emoji=item.get('emoji'),
-                description=f"Get the {item['label']} role"
-            ))
+        user_role_ids = [r.id for r in user.roles]
         
-        if not options:
-            options.append(discord.SelectOption(label="No roles configured", value="none", description="Ask admin to config"))
-
-        super().__init__(
-            placeholder="Choose your color...",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id="role_menu:colors"
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "none":
-            await interaction.response.send_message("No roles are currently configured.", ephemeral=True)
-            return
-
-        selected_role_id = int(self.values[0])
-        selected_role = interaction.guild.get_role(selected_role_id)
-        
-        if not selected_role:
-             await interaction.response.send_message(f"Role with ID **{selected_role_id}** not found! It might have been deleted.", ephemeral=True)
-             return
-
-        # 1. Remove OTHER color roles (Mutual Exclusivity)
-        # We need to check against ALL color roles defined in the current config
-        role_config = load_roles_config()
-        color_role_ids = [item['id'] for item in role_config.get('colors', [])]
-        
-        roles_to_remove = []
-        for r_id in color_role_ids:
-            if r_id != selected_role_id:
-                r = interaction.guild.get_role(r_id)
-                if r and r in interaction.user.roles:
-                    roles_to_remove.append(r)
-        
-        if roles_to_remove:
-            try:
-                await interaction.user.remove_roles(*roles_to_remove)
-            except discord.Forbidden:
-                await interaction.response.send_message("❌ Error: I don't have permission to remove old roles. Check hierarchy.", ephemeral=True)
-                return
-
-        # 2. Toggle the selected role
-        try:
-            if selected_role in interaction.user.roles:
-                await interaction.user.remove_roles(selected_role)
-                await interaction.response.send_message(f"Removed **{selected_role.name}**.", ephemeral=True)
-            else:
-                await interaction.user.add_roles(selected_role)
-                msg = f"You are now **{selected_role.name}**!"
-                if roles_to_remove:
-                    msg += " (Removed other colors)"
-                await interaction.response.send_message(msg, ephemeral=True)
-        except discord.Forbidden:
-             await interaction.response.send_message(f"❌ Error: I cannot assign **{selected_role.name}**. My role must be higher than it!", ephemeral=True)
-
-
-class HobbySelect(discord.ui.Select):
-    def __init__(self, options_data):
-        options = []
-        for item in options_data:
-            options.append(discord.SelectOption(
-                label=item['label'],
-                value=str(item['id']),
-                emoji=item.get('emoji'),
-                description=f"Toggle {item['label']} role"
-            ))
-
-        if not options:
-            options.append(discord.SelectOption(label="No hobbies configured", value="none"))
-
-        # max_values=len(options) lets them pick all of them
-        super().__init__(
-            placeholder="Select to toggle hobbies...",
-            min_values=1,
-            max_values=max(1, len(options)), # Ensure max_values is at least 1
-            options=options,
-            custom_id="role_menu:hobbies"
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "none":
-            await interaction.response.send_message("No hobbies configured.", ephemeral=True)
-            return
-
-        response_parts = []
-        
-        for role_id_str in self.values:
-            role_id = int(role_id_str)
-            role = interaction.guild.get_role(role_id)
+        for item in self.roles_data:
+            role_id = item['id']
+            is_selected = role_id in user_role_ids
             
-            if role:
-                if role in interaction.user.roles:
-                    try:
-                        await interaction.user.remove_roles(role)
-                        response_parts.append(f"Removed **{role.name}**")
-                    except discord.Forbidden:
-                        response_parts.append(f"❌ Failed to remove **{role.name}**")
+            options.append(discord.SelectOption(
+                label=item['label'],
+                value=str(role_id),
+                emoji=item.get('emoji'),
+                description=f"{'Selected' if is_selected else 'Select'} {item['label']}",
+                default=is_selected 
+            ))
+        
+        # Handle empty case
+        if not options:
+            options.append(discord.SelectOption(label="No roles configured", value="none"))
+
+        # Determine Max Values
+        # If exclusive: max 1.
+        # If multi: max is len(options).
+        max_vals = 1 if self.is_exclusive else len(options)
+        max_vals = min(max(1, max_vals), 25)
+
+        super().__init__(
+            placeholder=f"Select {self.category_name}...",
+            min_values=0 if not self.is_exclusive else 1, # Multi can deselect all. Exclusive usually implies 1, unless we allow 0? Let's say min 0 for multi.
+            max_values=max_vals,
+            options=options[:25]
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values and self.values[0] == "none":
+            await interaction.response.defer() # Do nothing
+            return
+
+        # Refetch user to get latest state? 
+        # Actually interaction.user is cached. To be super safe we might want interaction.guild.get_member(user.id)
+        # But for now, standard user object is okay.
+        
+        member = interaction.guild.get_member(interaction.user.id)
+        if not member:
+            return
+
+        selected_ids = set(int(v) for v in self.values)
+        
+        # All potential role IDs in this category
+        category_role_ids = set(r['id'] for r in self.roles_data)
+        
+        # Identify what to Add and what to Remove
+        to_add = []
+        to_remove = []
+
+        if self.is_exclusive:
+            # Exclusive Logic:
+            # The user picked ONE value (or zero if we allowed min 0, but we set min 1 typically for radios. 
+            # Actually standard generic Select min_values=1).
+            # If they picked X, we must remove ALL other roles in this category.
+            
+            target_id = int(self.values[0])
+            target_role =  interaction.guild.get_role(target_id)
+            
+            # Roles to remove: Any role in this category that the user HAS, except the chosen one
+            for r_id in category_role_ids:
+                if r_id != target_id:
+                     role_obj = interaction.guild.get_role(r_id)
+                     if role_obj and role_obj in member.roles:
+                         to_remove.append(role_obj)
+            
+            # Role to add: The chosen one (if not already possessed)
+            if target_role and target_role not in member.roles:
+                to_add.append(target_role)
+
+        else:
+            # Multi-Select Logic (Sync State):
+            # Iterate through ALL roles in this category.
+            # If ID is in selected_ids -> Ensure user HAS it (Add if missing).
+            # If ID is NOT in selected_ids -> Ensure user does NOT have it (Remove if present).
+            
+            for r_id in category_role_ids:
+                role_obj = interaction.guild.get_role(r_id)
+                if not role_obj: continue
+                
+                if r_id in selected_ids:
+                    # User WANTS this role
+                    if role_obj not in member.roles:
+                        to_add.append(role_obj)
                 else:
-                    try:
-                        await interaction.user.add_roles(role)
-                        response_parts.append(f"Added **{role.name}**")
-                    except discord.Forbidden:
-                        response_parts.append(f"❌ Failed to add **{role.name}**")
-            else:
-                response_parts.append(f"❌ Role ID **{role_id}** not found")
+                    # User does NOT want this role (unchecked it)
+                    if role_obj in member.roles:
+                        to_remove.append(role_obj)
 
-        await interaction.response.send_message(", ".join(response_parts), ephemeral=True)
+        # Apply Changes
+        response_text = [] # Silent implementation? Or ephemeral feedback? 
+        # Since the menu is ephemeral, feedback is good.
+        
+        try:
+            if to_remove:
+                await member.remove_roles(*to_remove)
+                response_text.append(f"Removed: {', '.join(r.name for r in to_remove)}")
+            
+            if to_add:
+                await member.add_roles(*to_add)
+                response_text.append(f"Added: {', '.join(r.name for r in to_add)}")
+                
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I do not have permission to manage these roles!", ephemeral=True)
+            return
+            
+        final_msg = "Updated!" if not response_text else " | ".join(response_text)
+        
+        # We need to defer or edit to acknowledge the interaction so it doesn't fail
+        # Re-sending the message updates the view state (checkboxes) automatically? 
+        # No, we need to update the options to reflect new 'default' values if we want the menu to stay consistent.
+        # But closing it is also fine.
+        
+        await interaction.response.send_message(final_msg, ephemeral=True)
 
 
-class RoleView(discord.ui.View):
+class UserSpecificRoleView(discord.ui.View):
+    def __init__(self, user, guild):
+        super().__init__(timeout=180) # Ephemeral views can timeout
+        
+        config = load_roles_config()
+        for cat in config.get('categories', []):
+            self.add_item(UserSpecificRoleSelect(cat, user, guild))
+
+class MasterRoleButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Open Role Menu",
+            style=discord.ButtonStyle.primary,
+            custom_id="role_menu:master_btn",
+            emoji="🎭"
+        )
+        
+    async def callback(self, interaction: discord.Interaction):
+        view = UserSpecificRoleView(interaction.user, interaction.guild)
+        if not view.children:
+             await interaction.response.send_message("❌ No roles are currently configured.", ephemeral=True)
+             return
+        
+        await interaction.response.send_message(
+            "👇 **Select your roles below**\n"
+            "• Use the dropdowns to pick your roles.\n"
+            "• Checkboxes show what you currently have.", 
+            view=view, 
+            ephemeral=True
+        )
+
+class MasterView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        
-        # Load fresh config
-        config = load_roles_config()
-        
-        # Only add dropdowns if there are options, or placeholders
-        self.add_item(ColorSelect(config.get('colors', [])))
-        self.add_item(HobbySelect(config.get('hobbies', [])))
-
+        self.add_item(MasterRoleButton())
 
 class Roles(commands.Cog):
     def __init__(self, bot):
@@ -162,134 +208,89 @@ class Roles(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # We register a View so the bot listens to the custom_ids.
-        # Even if the config changes later, as long as custom_ids are stable,
-        # the bot will receive the interaction. 
-        # Note: The View registered here uses the config AT STARTUP time.
-        # But since we create a NEW View every time we send the menu, 
-        # and the interactions are handled by constructing a View state,
-        # we generally rely on the fact that persistence works via custom_id.
-        self.bot.add_view(RoleView())
-        print("RoleView registered for persistence.")
+        # Register the Master View (The one with the persistent button)
+        self.bot.add_view(MasterView())
+        print("Role MasterView registered.")
 
-    @app_commands.command(name="rolemenu", description="Spawns the role selection menu (Admin only)")
+    @app_commands.command(name="rolemenu", description="Spawns the 'Open Role Menu' button")
     @app_commands.checks.has_permissions(administrator=True)
     async def rolemenu(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="Server Roles",
-            description="Use the dropdowns below to select your roles!",
+            title="Self-Assignable Roles",
+            description="Click the button below to browse and assign roles to yourself!",
             color=discord.Color.gold()
         )
-        embed.set_footer(text="Roles are updated simply by selecting them.")
-        
-        # Determine the updated View based on current JSON
-        view = RoleView()
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=MasterView())
 
     # --- Configuration Commands ---
+    role_group = app_commands.Group(name="role_config", description="Manage dynamic role categories")
 
-    role_group = app_commands.Group(name="role_config", description="Manage dynamic roles")
-
-    @role_group.command(name="add_color", description="Add a role to the Color dropdown (Mutually Exclusive)")
-    @app_commands.describe(role="The role to add", label="Name in the menu", emoji="Emoji (optional)")
+    @role_group.command(name="create_category", description="Create a new role category")
+    @app_commands.describe(name="Name (e.g. Pronouns)", is_exclusive="True=Radio, False=Checkbox")
     @app_commands.checks.has_permissions(administrator=True)
-    async def add_color(self, interaction: discord.Interaction, role: discord.Role, label: str, emoji: str = None):
+    async def create_category(self, interaction: discord.Interaction, name: str, description: str, is_exclusive: bool):
         config = load_roles_config()
-        
-        new_entry = {
-            "id": role.id,
-            "label": label,
-            "emoji": emoji or "🎨"
-        }
-        
-        # Check against duplicates
-        if any(c['id'] == role.id for c in config.get('colors', [])):
-             await interaction.response.send_message(f"Role **{role.name}** is already in Colors!", ephemeral=True)
+        if any(c['name'].lower() == name.lower() for c in config.get('categories', [])):
+             await interaction.response.send_message(f"❌ **{name}** already exists!", ephemeral=True)
              return
-
-        config.setdefault('colors', []).append(new_entry)
+        config.setdefault('categories', []).append({
+            "name": name, "description": description, "is_exclusive": is_exclusive, "roles": []
+        })
         save_roles_config(config)
-        
-        await interaction.response.send_message(f"✅ Added **{label}** ({role.name}) to Colors. Run `/rolemenu` to see changes.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Created category **{name}**.", ephemeral=True)
 
-    @role_group.command(name="add_hobby", description="Add a role to the Hobby dropdown (Multi-select)")
-    @app_commands.describe(role="The role to add", label="Name in the menu", emoji="Emoji (optional)")
+    @role_group.command(name="delete_category", description="Delete a category")
     @app_commands.checks.has_permissions(administrator=True)
-    async def add_hobby(self, interaction: discord.Interaction, role: discord.Role, label: str, emoji: str = None):
+    async def delete_category(self, interaction: discord.Interaction, name: str):
         config = load_roles_config()
-        
-        new_entry = {
-            "id": role.id,
-            "label": label,
-            "emoji": emoji or "🎮"
-        }
-        
-        if any(h['id'] == role.id for h in config.get('hobbies', [])):
-             await interaction.response.send_message(f"Role **{role.name}** is already in Hobbies!", ephemeral=True)
-             return
-
-        config.setdefault('hobbies', []).append(new_entry)
-        save_roles_config(config)
-        
-        await interaction.response.send_message(f"✅ Added **{label}** ({role.name}) to Hobbies. Run `/rolemenu` to see changes.", ephemeral=True)
-
-    @role_group.command(name="remove", description="Remove a role from configuration by ID or Label")
-    @app_commands.describe(category="colors or hobbies", identifier="Role Name (Label) or Role ID")
-    @app_commands.choices(category=[
-        app_commands.Choice(name="Colors", value="colors"),
-        app_commands.Choice(name="Hobbies", value="hobbies")
-    ])
-    @app_commands.checks.has_permissions(administrator=True)
-    async def remove_role(self, interaction: discord.Interaction, category: str, identifier: str):
-        config = load_roles_config()
-        cat_list = config.get(category, [])
-        
-        # Filter out the item
-        # We try to match by ID (int) or Label (str)
-        initial_len = len(cat_list)
-        
-        new_list = []
-        for item in cat_list:
-            # Check if identifier matches id or label
-            is_match = False
-            if str(item['id']) == identifier:
-                is_match = True
-            elif item['label'].lower() == identifier.lower():
-                is_match = True
-            
-            if not is_match:
-                new_list.append(item)
-        
-        if len(new_list) == initial_len:
-             await interaction.response.send_message(f"❌ Could not find a role matching **{identifier}** in {category}.", ephemeral=True)
-             return
-
-        config[category] = new_list
-        save_roles_config(config)
-        await interaction.response.send_message(f"✅ Removed matching role(s) from {category}. Run `/rolemenu` to update.", ephemeral=True)
-
-    @role_group.command(name="list", description="List currently configured roles")
-    async def list_roles(self, interaction: discord.Interaction):
-        config = load_roles_config()
-        
-        embed = discord.Embed(title="Configured Roles", color=discord.Color.teal())
-        
-        colors = config.get('colors', [])
-        if colors:
-            desc = "\n".join([f"{c['emoji']} **{c['label']}** (ID: {c['id']})" for c in colors])
-            embed.add_field(name="Colors (Exclusive)", value=desc, inline=False)
+        initial = len(config.get('categories', []))
+        config['categories'] = [c for c in config.get('categories', []) if c['name'].lower() != name.lower()]
+        if len(config['categories']) == initial:
+            await interaction.response.send_message(f"❌ Category **{name}** not found.", ephemeral=True)
         else:
-            embed.add_field(name="Colors", value="None configured", inline=False)
-            
-        hobbies = config.get('hobbies', [])
-        if hobbies:
-            desc = "\n".join([f"{h['emoji']} **{h['label']}** (ID: {h['id']})" for h in hobbies])
-            embed.add_field(name="Hobbies (Multi)", value=desc, inline=False)
-        else:
-            embed.add_field(name="Hobbies", value="None configured", inline=False)
-            
+            save_roles_config(config)
+            await interaction.response.send_message(f"✅ Deleted **{name}**.", ephemeral=True)
+
+    @role_group.command(name="add_role", description="Add a role to a category")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def add_role(self, interaction: discord.Interaction, category_name: str, role: discord.Role, label: str, emoji: str = None):
+        config = load_roles_config()
+        cat = next((c for c in config.get('categories', []) if c['name'].lower() == category_name.lower()), None)
+        if not cat:
+            await interaction.response.send_message(f"❌ Category **{category_name}** not found.", ephemeral=True)
+            return
+        if any(r['id'] == role.id for r in cat['roles']):
+            await interaction.response.send_message(f"❌ Role is already in this category!", ephemeral=True)
+            return
+        cat['roles'].append({"id": role.id, "label": label, "emoji": emoji or "🔹"})
+        save_roles_config(config)
+        await interaction.response.send_message(f"✅ Added **{label}** to **{category_name}**.", ephemeral=True)
+
+    @role_group.command(name="remove_role", description="Remove a role from a category")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def remove_role(self, interaction: discord.Interaction, category_name: str, identifier: str):
+        config = load_roles_config()
+        cat = next((c for c in config.get('categories', []) if c['name'].lower() == category_name.lower()), None)
+        if not cat:
+            await interaction.response.send_message(f"❌ Category **{category_name}** not found.", ephemeral=True)
+            return
+        initial = len(cat['roles'])
+        cat['roles'] = [r for r in cat['roles'] if str(r['id']) != identifier and r['label'].lower() != identifier.lower()]
+        if len(cat['roles']) == initial:
+             await interaction.response.send_message(f"❌ Role **{identifier}** not found.", ephemeral=True)
+             return
+        save_roles_config(config)
+        await interaction.response.send_message(f"✅ Removed role from **{category_name}**.", ephemeral=True)
+
+    @role_group.command(name="list", description="List configurations")
+    async def list_config(self, interaction: discord.Interaction):
+        config = load_roles_config()
+        embed = discord.Embed(title="Dynamic Roles", color=discord.Color.blurple())
+        for c in config.get('categories', []):
+            roles = [f"{r.get('emoji','')} {r['label']}" for r in c['roles']]
+            val = ", ".join(roles) if roles else "No roles"
+            embed.add_field(name=f"{c['name']} ({'Radio' if c['is_exclusive'] else 'Checkbox'})", value=val, inline=False)
         await interaction.response.send_message(embed=embed)
-
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))

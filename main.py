@@ -53,7 +53,7 @@ async def on_member_join(member):
 async def on_member_remove(member):
     channel = bot.get_channel(channel_id)
     if channel:
-        await channel.send(f"Goodbye, {member.mention}!")
+        await channel.send(f"Goodbye, {member.display_name}!")
 
 
 
