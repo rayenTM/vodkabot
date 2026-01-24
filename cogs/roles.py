@@ -266,87 +266,71 @@ class Roles(commands.Cog):
         self.bot.add_view(MasterView())
         print("Role MasterView registered.")
 
-    # --- DEPRECATED: Replaced by Admin Panel ---
-    
-    # @app_commands.command(name="rolemenu", description="Spawns the 'Open Role Menu' button")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def rolemenu(self, interaction: discord.Interaction):
-    #     embed = discord.Embed(
-    #         title="Self-Assignable Roles",
-    #         description="Click the button below to browse and assign roles to yourself!",
-    #         color=discord.Color.gold()
-    #     )
-    #     await interaction.response.send_message(embed=embed, view=MasterView())
-    # 
-    # # --- Configuration Commands ---
-    # role_group = app_commands.Group(name="role_config", description="Manage dynamic role categories")
-    # 
-    # @role_group.command(name="create_category", description="Create a new role category")
-    # @app_commands.describe(name="Name (e.g. Pronouns)", is_exclusive="True=Radio, False=Checkbox")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def create_category(self, interaction: discord.Interaction, name: str, description: str, is_exclusive: bool):
-    #     config = load_roles_config()
-    #     if any(c['name'].lower() == name.lower() for c in config.get('categories', [])):
-    #          await interaction.response.send_message(f"❌ **{name}** already exists!", ephemeral=True)
-    #          return
-    #     config.setdefault('categories', []).append({
-    #         "name": name, "description": description, "is_exclusive": is_exclusive, "roles": []
-    #     })
-    #     save_roles_config(config)
-    #     await interaction.response.send_message(f"✅ Created category **{name}**.", ephemeral=True)
-    # 
-    # @role_group.command(name="delete_category", description="Delete a category")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def delete_category(self, interaction: discord.Interaction, name: str):
-    #     config = load_roles_config()
-    #     initial = len(config.get('categories', []))
-    #     config['categories'] = [c for c in config.get('categories', []) if c['name'].lower() != name.lower()]
-    #     if len(config['categories']) == initial:
-    #         await interaction.response.send_message(f"❌ Category **{name}** not found.", ephemeral=True)
-    #     else:
-    #         save_roles_config(config)
-    #         await interaction.response.send_message(f"✅ Deleted **{name}**.", ephemeral=True)
-    # 
-    # @role_group.command(name="add_role", description="Add a role to a category")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def add_role(self, interaction: discord.Interaction, category_name: str, role: discord.Role, label: str, emoji: str = None):
-    #     config = load_roles_config()
-    #     cat = next((c for c in config.get('categories', []) if c['name'].lower() == category_name.lower()), None)
-    #     if not cat:
-    #         await interaction.response.send_message(f"❌ Category **{category_name}** not found.", ephemeral=True)
-    #         return
-    #     if any(r['id'] == role.id for r in cat['roles']):
-    #         await interaction.response.send_message(f"❌ Role is already in this category!", ephemeral=True)
-    #         return
-    #     cat['roles'].append({"id": role.id, "label": label, "emoji": emoji or "🔹"})
-    #     save_roles_config(config)
-    #     await interaction.response.send_message(f"✅ Added **{label}** to **{category_name}**.", ephemeral=True)
-    # 
-    # @role_group.command(name="remove_role", description="Remove a role from a category")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def remove_role(self, interaction: discord.Interaction, category_name: str, identifier: str):
-    #     config = load_roles_config()
-    #     cat = next((c for c in config.get('categories', []) if c['name'].lower() == category_name.lower()), None)
-    #     if not cat:
-    #         await interaction.response.send_message(f"❌ Category **{category_name}** not found.", ephemeral=True)
-    #         return
-    #     initial = len(cat['roles'])
-    #     cat['roles'] = [r for r in cat['roles'] if str(r['id']) != identifier and r['label'].lower() != identifier.lower()]
-    #     if len(cat['roles']) == initial:
-    #          await interaction.response.send_message(f"❌ Role **{identifier}** not found.", ephemeral=True)
-    #          return
-    #     save_roles_config(config)
-    #     await interaction.response.send_message(f"✅ Removed role from **{category_name}**.", ephemeral=True)
-    # 
-    # @role_group.command(name="list", description="List configurations")
-    # async def list_config(self, interaction: discord.Interaction):
-    #     config = load_roles_config()
-    #     embed = discord.Embed(title="Dynamic Roles", color=discord.Color.blurple())
-    #     for c in config.get('categories', []):
-    #         roles = [f"{r.get('emoji','')} {r['label']}" for r in c['roles']]
-    #         val = ", ".join(roles) if roles else "No roles"
-    #         embed.add_field(name=f"{c['name']} ({'Radio' if c['is_exclusive'] else 'Checkbox'})", value=val, inline=False)
-    #     await interaction.response.send_message(embed=embed)
+    @app_commands.command(name="rolemenu", description="Spawns the 'Open Role Menu' button")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def rolemenu(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="Self-Assignable Roles",
+            description="Click the button below to browse and assign roles to yourself!",
+            color=discord.Color.gold()
+        )
+        await interaction.response.send_message(embed=embed, view=MasterView())
+
+    # --- Configuration Commands ---
+    role_group = app_commands.Group(name="role_config", description="Manage dynamic role categories")
+
+    @role_group.command(name="create_category", description="Create a new role category")
+    @app_commands.describe(name="Name (e.g. Pronouns)", is_exclusive="True=Radio, False=Checkbox")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def create_category(self, interaction: discord.Interaction, name: str, description: str, is_exclusive: bool):
+        success = self.admin_create_category(name, description, is_exclusive)
+        if success:
+             await interaction.response.send_message(f"✅ Created category **{name}**.", ephemeral=True)
+        else:
+             await interaction.response.send_message(f"❌ **{name}** already exists!", ephemeral=True)
+
+    @role_group.command(name="delete_category", description="Delete a category")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def delete_category(self, interaction: discord.Interaction, name: str):
+        success = self.admin_delete_category(name)
+        if success:
+            await interaction.response.send_message(f"✅ Deleted **{name}**.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Category **{name}** not found.", ephemeral=True)
+
+    @role_group.command(name="add_role", description="Add a role to a category")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def add_role(self, interaction: discord.Interaction, category_name: str, role: discord.Role, label: str, emoji: str = None):
+        result = self.admin_add_role(category_name, role.id, label, emoji)
+        
+        if result == 'OK':
+             await interaction.response.send_message(f"✅ Added **{label}** to **{category_name}**.", ephemeral=True)
+        elif result == 'CAT_NOT_FOUND':
+             await interaction.response.send_message(f"❌ Category **{category_name}** not found.", ephemeral=True)
+        elif result == 'ROLE_EXISTS':
+             await interaction.response.send_message(f"❌ Role is already in this category!", ephemeral=True)
+
+    @role_group.command(name="remove_role", description="Remove a role from a category")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def remove_role(self, interaction: discord.Interaction, category_name: str, identifier: str):
+        result = self.admin_remove_role(category_name, identifier)
+        
+        if result == 'OK':
+             await interaction.response.send_message(f"✅ Removed role from **{category_name}**.", ephemeral=True)
+        elif result == 'CAT_NOT_FOUND':
+             await interaction.response.send_message(f"❌ Category **{category_name}** not found.", ephemeral=True)
+        elif result == 'ROLE_NOT_FOUND':
+             await interaction.response.send_message(f"❌ Role **{identifier}** not found.", ephemeral=True)
+
+    @role_group.command(name="list", description="List configurations")
+    async def list_config(self, interaction: discord.Interaction):
+        config = self.get_role_config()
+        embed = discord.Embed(title="Dynamic Roles", color=discord.Color.blurple())
+        for c in config.get('categories', []):
+            roles = [f"{r.get('emoji','')} {r['label']}" for r in c['roles']]
+            val = ", ".join(roles) if roles else "No roles"
+            embed.add_field(name=f"{c['name']} ({'Radio' if c['is_exclusive'] else 'Checkbox'})", value=val, inline=False)
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))

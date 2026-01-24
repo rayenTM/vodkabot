@@ -32,8 +32,34 @@ bot = commands.Bot(command_prefix='/', intents=intents)
 async def on_ready():
     print(f'Logged in as {bot.user}')
     try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
+        # Prevent Duplicate Commands (Global vs Guild)
+        # We will sync ONLY to the specific guild for development (updates are instant)
+        # and explicitly CLEAR global commands to remove the duplicates.
+        
+        if guild_id:
+            guild_obj = discord.Object(id=guild_id)
+            
+            # 1. Copy all commands to our Guild
+            bot.tree.copy_global_to(guild=guild_obj)
+            
+            # 2. Clear Global commands (removes "ghost" global duplicates)
+            # This is necessary because previous runs might have synced globally.
+            # We want to use ONLY the guild-level commands for development.
+            bot.tree.clear_commands(guild=None)
+            
+            # 3. Sync!
+            # A) Global -> Empty (Removes duplicates from Discord)
+            await bot.tree.sync() # This clears the global list on Discord
+            
+            # B) Guild -> Full (Updates our guild instantly)
+            await bot.tree.sync(guild=guild_obj)
+            
+            print(f"Synced commands to Guild ID: {guild_id} (Global wiped to prevent dupe)")
+        else:
+            # Fallback to Global Sync if no Guild ID
+            synced = await bot.tree.sync()
+            print(f"Synced {len(synced)} command(s) globally")
+            
     except Exception as e:
         print(e)
 
