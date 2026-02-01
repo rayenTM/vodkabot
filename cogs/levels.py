@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import aiosqlite
 import os
+import math
 
 # Database file path
 DB_FILE = "/app/data/levels.db" if os.path.exists("/app/data") else "./data/levels.db"
@@ -73,6 +74,16 @@ class Levels(commands.Cog):
                 VALUES (?, ?, ?, 1)
                 ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
             """, (user_id, channel.guild.id, xp_to_add, xp_to_add))
+            
+            # Recalculate level to ensure it matches new XP
+            async with self.db.execute("SELECT xp FROM users WHERE user_id = ? AND guild_id = ?", (user_id, channel.guild.id)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    new_xp = row['xp']
+                    # Formula: Level = floor(sqrt(XP / 100)) + 1
+                    correct_level = int(math.floor(math.sqrt(new_xp / 100))) + 1
+                    await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, user_id, channel.guild.id))
+
         await self.db.commit()
         return len(user_counts)
 
@@ -395,6 +406,58 @@ class Levels(commands.Cog):
 
         await self.set_guild_xp_rate(interaction.guild.id, amount)
         await interaction.response.send_message(f"✅ XP Rate set to **{amount} XP** per message.", ephemeral=True)
+
+    @level_group.command(name="reset", description="Reset a user's XP to the base requirement for their current level")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset(self, interaction: discord.Interaction, member: discord.Member):
+        """
+        Resets a user's XP to the exact amount required for their current level.
+        Useful for fixing glitched XP states.
+        """
+        if member.bot:
+            await interaction.response.send_message("🤖 Bots don't need XP resets!", ephemeral=True)
+            return
+
+        # Fetch current level
+        async with self.db.execute("SELECT level FROM users WHERE user_id = ? AND guild_id = ?", (member.id, interaction.guild.id)) as cursor:
+            row = await cursor.fetchone()
+        
+        if not row:
+            await interaction.response.send_message(f"❌ {member.display_name} has no data to reset.", ephemeral=True)
+            return
+
+        current_level = row['level']
+        
+        # Reuse set_level to force the XP reset
+        required_xp = await self.admin_set_level(member.id, interaction.guild.id, current_level)
+        
+        await interaction.response.send_message(f"✅ Reset {member.mention}'s XP to **{required_xp}** (Base for Level {current_level}).", ephemeral=True)
+
+    @level_group.command(name="recalculate", description="Recalculate a user's level based on their XP")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def recalculate(self, interaction: discord.Interaction, member: discord.Member):
+        """
+        Recalculates the user's level based on their current XP using the quadratic formula.
+        """
+        if member.bot:
+            await interaction.response.send_message("🤖 Bots don't have levels!", ephemeral=True)
+            return
+
+        async with self.db.execute("SELECT xp FROM users WHERE user_id = ? AND guild_id = ?", (member.id, interaction.guild.id)) as cursor:
+            row = await cursor.fetchone()
+        
+        if not row:
+            await interaction.response.send_message(f"❌ {member.display_name} has no data.", ephemeral=True)
+            return
+
+        current_xp = row['xp']
+        # Formula: Level = floor(sqrt(XP / 100)) + 1
+        correct_level = int(math.floor(math.sqrt(current_xp / 100))) + 1
+
+        await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, member.id, interaction.guild.id))
+        await self.db.commit()
+
+        await interaction.response.send_message(f"✅ Recalculated {member.mention}: **Level {correct_level}** ({current_xp} XP).", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Levels(bot))
