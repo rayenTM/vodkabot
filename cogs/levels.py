@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import aiosqlite
 import os
-import time
+import math
 
 # Database file path
 DB_FILE = "/app/data/levels.db" if os.path.exists("/app/data") else "./data/levels.db"
@@ -32,6 +32,23 @@ class Levels(commands.Cog):
 
     # --- Public Admin Methods (API) ---
 
+    # --- Helper Methods ---
+
+    def calculate_xp_requirement(self, level: int) -> int:
+        """
+        Calculates the TOTAL XP required to reach a specific level.
+        Formula: 100 * (Level - 1)^2
+        
+        Examples:
+        Lvl 1: 0 XP
+        Lvl 2: 100 XP
+        Lvl 3: 400 XP
+        Lvl 4: 900 XP
+        """
+        return 100 * ((level - 1) ** 2)
+
+    # --- Public Admin Methods (API) ---
+
     async def admin_give_xp(self, user_id: int, guild_id: int, amount: int):
         """Adds (or removes) XP and returns the new total XP."""
         await self.db.execute("""
@@ -47,7 +64,7 @@ class Levels(commands.Cog):
 
     async def admin_set_level(self, user_id: int, guild_id: int, level: int):
         """Sets a user's level and resets XP to minimum for that level."""
-        required_xp = self.get_total_xp_for_level(level)
+        required_xp = self.calculate_xp_requirement(level)
             
         await self.db.execute("""
             INSERT INTO users (user_id, guild_id, xp, level)
@@ -74,6 +91,16 @@ class Levels(commands.Cog):
                 VALUES (?, ?, ?, 1)
                 ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
             """, (user_id, channel.guild.id, xp_to_add, xp_to_add))
+            
+            # Recalculate level to ensure it matches new XP
+            async with self.db.execute("SELECT xp FROM users WHERE user_id = ? AND guild_id = ?", (user_id, channel.guild.id)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    new_xp = row['xp']
+                    # Formula: Level = floor(sqrt(XP / 100)) + 1
+                    correct_level = int(math.floor(math.sqrt(new_xp / 100))) + 1
+                    await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, user_id, channel.guild.id))
+
         await self.db.commit()
         return len(user_counts)
 
@@ -97,6 +124,21 @@ class Levels(commands.Cog):
             rows = await cursor.fetchall()
             return [{"level": r['level'], "role_id": r['role_id']} for r in rows]
 
+    async def get_guild_xp_rate(self, guild_id: int) -> int:
+        """Fetches the XP rate for a guild, defaulting to 10."""
+        async with self.db.execute("SELECT xp_rate FROM guild_settings WHERE guild_id = ?", (guild_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row['xp_rate'] if row else 10
+
+    async def set_guild_xp_rate(self, guild_id: int, rate: int):
+        """Sets the XP rate for a guild."""
+        await self.db.execute("""
+            INSERT INTO guild_settings (guild_id, xp_rate)
+            VALUES (?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET xp_rate = ?
+        """, (guild_id, rate, rate))
+        await self.db.commit()
+
 
     async def cog_load(self):
         """
@@ -105,6 +147,12 @@ class Levels(commands.Cog):
         """
         # Connect to the SQLite database
         # This creates the file if it doesn't exist.
+        
+        # Ensure directory exists
+        db_dir = os.path.dirname(DB_FILE)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir)
+
         self.db = await aiosqlite.connect(DB_FILE)
         
         # Enable row factory to get results as accessible objects/dicts instead of just tuples
@@ -134,6 +182,14 @@ class Levels(commands.Cog):
                 level INTEGER,
                 role_id INTEGER,
                 PRIMARY KEY (guild_id, level)
+            )
+        """)
+
+        # Create table for guild settings (e.g. XP rate)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id INTEGER PRIMARY KEY,
+                xp_rate INTEGER DEFAULT 10
             )
         """)
         
@@ -168,8 +224,8 @@ class Levels(commands.Cog):
         # ----------------------
 
         # 3. Add XP
-        # We award 10 XP per message for this prototype.
-        xp_gain = 10
+        # We award customized XP per message (default 10).
+        xp_gain = await self.get_guild_xp_rate(message.guild.id)
         
         # SQL: UPSERT (Insert or Update)
         # We try to Insert the user. If they exist (Conflict on Primary Key), we just Update their XP.
@@ -191,11 +247,13 @@ class Levels(commands.Cog):
                 current_xp = row['xp']
                 current_level = row['level']
                 
-                # Formula: Quadratic Scaling
-                next_level_xp = self.get_xp_for_next_level(current_level)
+                # Formula: Check if current XP meets requirement for NEXT level
+                # Quadratic: 100 * (L-1)^2
+                next_level = current_level + 1
+                required_xp = self.calculate_xp_requirement(next_level)
                 
-                if current_xp >= next_level_xp:
-                    new_level = current_level + 1
+                if current_xp >= required_xp:
+                    new_level = next_level
                     await self.db.execute("""
                         UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?
                     """, (new_level, message.author.id, message.guild.id))
@@ -278,185 +336,158 @@ class Levels(commands.Cog):
             
         embed.description = description
         await interaction.response.send_message(embed=embed)
-    
-    # --- DEPRECATED: Replaced by Admin Panel ---
-    
-    # @app_commands.command(name="sync_xp", description="[Admin] Scan chat history to backfill XP")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def sync_xp(self, interaction: discord.Interaction, limit: int = 1000):
-    #     """
-    #     This is a 'Migration' script essentially.
-    #     It scans the current channel history and awards XP retroactively.
-    #     """
-    #     await interaction.response.send_message(f"🔄 Starting sync... Scanning last {limit} messages. This might take a moment.", ephemeral=True)
-    #     
-    #     # 1. Count messages per user in memory first (to reduce DB writes)
-    #     user_counts = {}
-    #     
-    #     # interaction.channel is where the command was run
-    #     async for message in interaction.channel.history(limit=limit):
-    #         if message.author.bot:
-    #             continue
-    #         
-    #         uid = message.author.id
-    #         user_counts[uid] = user_counts.get(uid, 0) + 1
-    #         
-    #     if not user_counts:
-    #         await interaction.followup.send("No valid user messages found in the recent history.")
-    #         return
-    # 
-    #     # 2. Bulk Update Database
-    #     count_updated = 0
-    #     
-    #     # We process each user found
-    #     for user_id, count in user_counts.items():
-    #         xp_to_add = count * 10
-    #         
-    #         # Same UPSERT logic
-    #         await self.db.execute("""
-    #             INSERT INTO users (user_id, guild_id, xp, level)
-    #             VALUES (?, ?, ?, 1)
-    #             ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
-    #         """, (user_id, interaction.guild.id, xp_to_add, xp_to_add))
-    #         
-    #         count_updated += 1
-    # 
-    #     # 3. Recalculate Levels for everyone (Bulk Fix)
-    #     # Simple formula update: Set level based on total XP
-    #     # E.g. Level = floor(xp / 100) + 1 roughly, but for our logic:
-    #     # We iterate and check manually or use a math formula if SQL supports it well.
-    #     # For prototype, let's just commit the XP. Level up will happen on next message 
-    #     # OR we can run a quick check now.
-    #     
-    #     # Let's simple commit for now
-    #     await self.db.commit()
-    # 
-    #     await interaction.followup.send(f"✅ Sync Complete! Updated XP for {count_updated} users based on {limit} messages.\nUsers might level up on their next message!")
-    
+    @app_commands.command(name="sync_xp", description="[Admin] Scan chat history to backfill XP")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sync_xp(self, interaction: discord.Interaction, limit: int = 1000):
+        """
+        scans the current channel history and awards XP retroactively.
+        """
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(f"🔄 Starting sync... Scanning last {limit} messages. This might take a moment.")
+        
+        count_updated = await self.admin_sync_xp(interaction.channel, limit)
+
+        await interaction.followup.send(f"✅ Sync Complete! Updated XP for {count_updated} users based on {limit} messages.")
     # --- Level Management Commands ---
     
-    # level_group = app_commands.Group(name="level", description="Manage level rewards")
-    # 
-    # @level_group.command(name="set_reward", description="Set a role reward for a level")
-    # @app_commands.checks.has_permissions(manage_roles=True)
-    # async def set_reward(self, interaction: discord.Interaction, level: int, role: discord.Role):
-    #     """
-    #     Configure a role to be given when a user reaches a specific level.
-    #     """
-    #     if role.position >= interaction.guild.me.top_role.position:
-    #         await interaction.response.send_message(f"❌ I cannot assign the role {role.mention} because it is higher than or equal to my highest role.", ephemeral=True)
-    #         return
-    # 
-    #     await self.db.execute("""
-    #         INSERT INTO level_rewards (guild_id, level, role_id)
-    #         VALUES (?, ?, ?)
-    #         ON CONFLICT(guild_id, level) DO UPDATE SET role_id = ?
-    #     """, (interaction.guild.id, level, role.id, role.id))
-    #     await self.db.commit()
-    #     
-    #     await interaction.response.send_message(f"✅ Level {level} reward set to {role.mention}!", ephemeral=True)
-    # 
-    # @level_group.command(name="remove_reward", description="Remove a reward for a level")
-    # @app_commands.checks.has_permissions(manage_roles=True)
-    # async def remove_reward(self, interaction: discord.Interaction, level: int):
-    #     """
-    #     Remove a configured role reward for a specific level.
-    #     """
-    #     await self.db.execute("DELETE FROM level_rewards WHERE guild_id = ? AND level = ?", (interaction.guild.id, level))
-    #     await self.db.commit()
-    #     
-    #     await interaction.response.send_message(f"✅ Removed reward for Level {level}.", ephemeral=True)
-    # 
-    # @level_group.command(name="rewards", description="List all level rewards")
-    # async def list_rewards(self, interaction: discord.Interaction):
-    #     """
-    #     List all configured rewards for this server.
-    #     """
-    #     async with self.db.execute("SELECT level, role_id FROM level_rewards WHERE guild_id = ? ORDER BY level ASC", (interaction.guild.id,)) as cursor:
-    #         rows = await cursor.fetchall()
-    #         
-    #     if not rows:
-    #         await interaction.response.send_message("No level rewards configured yet.", ephemeral=True)
-    #         return
-    # 
-    #     embed = discord.Embed(title="🎁 Level Rewards", color=discord.Color.purple())
-    #     description = ""
-    #     for row in rows:
-    #         role = interaction.guild.get_role(row['role_id'])
-    #         role_name = role.mention if role else f"Deleted Role ({row['role_id']})"
-    #         description += f"**Level {row['level']}**: {role_name}\n"
-    #         
-    #     embed.description = description
-    #     await interaction.response.send_message(embed=embed)
-    # 
-    # @level_group.command(name="give_xp", description="Give (or take) XP from a user")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def give_xp(self, interaction: discord.Interaction, member: discord.Member, amount: int):
-    #     """
-    #     Manually add or remove XP from a user. 
-    #     Note: This does NOT automatically check for level up/down recursively perfectly, 
-    #     but we will run a quick check.
-    #     """
-    #     if member.bot:
-    #         await interaction.response.send_message("🤖 Bots don't need XP!", ephemeral=True)
-    #         return
-    # 
-    #     # Simple UPSERT to ensure user exists
-    #     await self.db.execute("""
-    #         INSERT INTO users (user_id, guild_id, xp, level)
-    #         VALUES (?, ?, ?, 1)
-    #         ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
-    #     """, (member.id, interaction.guild.id, amount, amount))
-    #     
-    #     await self.db.commit()
-    #     
-    #     # Now check their new status
-    #     async with self.db.execute("SELECT xp, level FROM users WHERE user_id = ? AND guild_id = ?", (member.id, interaction.guild.id)) as cursor:
-    #         row = await cursor.fetchone()
-    #         new_xp = row['xp']
-    #         current_level = row['level']
-    #         
-    #     # Very basic check: If XP is enough for next level, or too low for current.
-    #     # For a full system, we might want a 'recalculate_level' helper function.
-    #     # For now, let's just confirm the action.
-    #     await interaction.response.send_message(f"✅ Adjusted {member.mention}'s XP by {amount}. New Total: {new_xp}", ephemeral=True)
-    # 
-    # @level_group.command(name="set_level", description="Set a user's level directly")
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def set_level(self, interaction: discord.Interaction, member: discord.Member, level: int):
-    #     """
-    #     Force set a user's level. This will reset their XP to the minimum required for that level.
-    #     """
-    #     if level < 1:
-    #         await interaction.response.send_message("❌ Level must be at least 1.", ephemeral=True)
-    #         return
-    #         
-    #     # Calculate minimum XP for this level
-    #     # Based on our formula: Level 1=0-99, Level 2=100+, Level 3=300+ (Wait, our formula was recursive/iterative in on_message)
-    #     # on_message logic: "next_level_xp = current_level * 100".
-    #     # This implies a triangular number series: 
-    #     # Lvl 1->2: 100xp (Total 100)
-    #     # Lvl 2->3: 200xp (Total 300)
-    #     # Lvl 3->4: 300xp (Total 600)
-    #     # Formula for Total XP for Level L = 100 * (L * (L-1) / 2) roughly?
-    #     # Let's double check logic:
-    #     # if current_xp >= current_level * 100: level up.
-    #     # This means to BE at Level 2, you needed 100 XP.
-    #     # To BE at Level 3, you needed 100 (for L1) + 200 (for L2) = 300 XP.
-    #     # Sum of 100*i for i=1 to L-1
-    #     
-    #     required_xp = 0
-    #     for i in range(1, level):
-    #         required_xp += i * 100
-    #         
-    #     await self.db.execute("""
-    #         INSERT INTO users (user_id, guild_id, xp, level)
-    #         VALUES (?, ?, ?, ?)
-    #         ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = ?, level = ?
-    #     """, (member.id, interaction.guild.id, required_xp, level, required_xp, level))
-    #     await self.db.commit()
-    #     
-    #     await interaction.response.send_message(f"✅ Set {member.mention} to **Level {level}** (XP set to {required_xp}).", ephemeral=True)
+    level_group = app_commands.Group(name="level", description="Manage level rewards")
+
+    @level_group.command(name="set_reward", description="Set a role reward for a level")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def set_reward(self, interaction: discord.Interaction, level: int, role: discord.Role):
+        """
+        Configure a role to be given when a user reaches a specific level.
+        """
+        if role.position >= interaction.guild.me.top_role.position:
+            await interaction.response.send_message(f"❌ I cannot assign the role {role.mention} because it is higher than or equal to my highest role.", ephemeral=True)
+            return
+
+        await self.admin_add_reward(interaction.guild.id, level, role.id)
+        
+        await interaction.response.send_message(f"✅ Level {level} reward set to {role.mention}!", ephemeral=True)
+
+    @level_group.command(name="remove_reward", description="Remove a reward for a level")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def remove_reward(self, interaction: discord.Interaction, level: int):
+        """
+        Remove a configured role reward for a specific level.
+        """
+        await self.admin_remove_reward(interaction.guild.id, level)
+        
+        await interaction.response.send_message(f"✅ Removed reward for Level {level}.", ephemeral=True)
+
+    @level_group.command(name="rewards", description="List all level rewards")
+    async def list_rewards(self, interaction: discord.Interaction):
+        """
+        List all configured rewards for this server.
+        """
+        rows = await self.get_rewards_config(interaction.guild.id)
+            
+        if not rows:
+            await interaction.response.send_message("No level rewards configured yet.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="🎁 Level Rewards", color=discord.Color.purple())
+        description = ""
+        for row in rows:
+            role = interaction.guild.get_role(row['role_id'])
+            role_name = role.mention if role else f"Deleted Role ({row['role_id']})"
+            description += f"**Level {row['level']}**: {role_name}\n"
+            
+        embed.description = description
+        await interaction.response.send_message(embed=embed)
+
+    @level_group.command(name="give_xp", description="Give (or take) XP from a user")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def give_xp(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+        """
+        Manually add or remove XP from a user. 
+        """
+        if member.bot:
+            await interaction.response.send_message("🤖 Bots don't need XP!", ephemeral=True)
+            return
+
+        new_xp = await self.admin_give_xp(member.id, interaction.guild.id, amount)
+        await interaction.response.send_message(f"✅ Adjusted {member.mention}'s XP by {amount}. New Total: {new_xp}", ephemeral=True)
+
+    @level_group.command(name="set_level", description="Set a user's level directly")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_level(self, interaction: discord.Interaction, member: discord.Member, level: int):
+        """
+        Force set a user's level. This will reset their XP to the minimum required for that level.
+        """
+        if level < 1:
+            await interaction.response.send_message("❌ Level must be at least 1.", ephemeral=True)
+            return
+            
+        required_xp = await self.admin_set_level(member.id, interaction.guild.id, level)
+        
+        await interaction.response.send_message(f"✅ Set {member.mention} to **Level {level}** (XP set to {required_xp}).", ephemeral=True)
+
+    @level_group.command(name="set_xp_rate", description="Set the XP earned per message")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_xp_rate(self, interaction: discord.Interaction, amount: int):
+        """
+        Configure how much XP is given per message for this server.
+        """
+        if amount < 1:
+            await interaction.response.send_message("❌ XP rate must be at least 1.", ephemeral=True)
+            return
+
+        await self.set_guild_xp_rate(interaction.guild.id, amount)
+        await interaction.response.send_message(f"✅ XP Rate set to **{amount} XP** per message.", ephemeral=True)
+
+    @level_group.command(name="reset", description="Reset a user's XP to the base requirement for their current level")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset(self, interaction: discord.Interaction, member: discord.Member):
+        """
+        Resets a user's XP to the exact amount required for their current level.
+        Useful for fixing glitched XP states.
+        """
+        if member.bot:
+            await interaction.response.send_message("🤖 Bots don't need XP resets!", ephemeral=True)
+            return
+
+        # Fetch current level
+        async with self.db.execute("SELECT level FROM users WHERE user_id = ? AND guild_id = ?", (member.id, interaction.guild.id)) as cursor:
+            row = await cursor.fetchone()
+        
+        if not row:
+            await interaction.response.send_message(f"❌ {member.display_name} has no data to reset.", ephemeral=True)
+            return
+
+        current_level = row['level']
+        
+        # Reuse set_level to force the XP reset
+        required_xp = await self.admin_set_level(member.id, interaction.guild.id, current_level)
+        
+        await interaction.response.send_message(f"✅ Reset {member.mention}'s XP to **{required_xp}** (Base for Level {current_level}).", ephemeral=True)
+
+    @level_group.command(name="recalculate", description="Recalculate a user's level based on their XP")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def recalculate(self, interaction: discord.Interaction, member: discord.Member):
+        """
+        Recalculates the user's level based on their current XP using the quadratic formula.
+        """
+        if member.bot:
+            await interaction.response.send_message("🤖 Bots don't have levels!", ephemeral=True)
+            return
+
+        async with self.db.execute("SELECT xp FROM users WHERE user_id = ? AND guild_id = ?", (member.id, interaction.guild.id)) as cursor:
+            row = await cursor.fetchone()
+        
+        if not row:
+            await interaction.response.send_message(f"❌ {member.display_name} has no data.", ephemeral=True)
+            return
+
+        current_xp = row['xp']
+        # Formula: Level = floor(sqrt(XP / 100)) + 1
+        correct_level = int(math.floor(math.sqrt(current_xp / 100))) + 1
+
+        await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, member.id, interaction.guild.id))
+        await self.db.commit()
+
+        await interaction.response.send_message(f"✅ Recalculated {member.mention}: **Level {correct_level}** ({current_xp} XP).", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Levels(bot))
