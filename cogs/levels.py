@@ -34,18 +34,32 @@ class Levels(commands.Cog):
 
     # --- Helper Methods ---
 
-    def calculate_xp_requirement(self, level: int) -> int:
+    def calculate_xp_for_level(self, level: int) -> int:
         """
-        Calculates the TOTAL XP required to reach a specific level.
-        Formula: 100 * (Level - 1)^2
-        
-        Examples:
-        Lvl 1: 0 XP
-        Lvl 2: 100 XP
-        Lvl 3: 400 XP
-        Lvl 4: 900 XP
+        Calculates the TOTAL cumulative XP required to reach a specific level.
+        Uses the MEE6 formula: Sum of (5*L^2 + 50*L + 100) for L=0 to level-1.
         """
-        return 100 * ((level - 1) ** 2)
+        total_xp = 0
+        for i in range(level):
+            total_xp += 5 * (i ** 2) + 50 * i + 100
+        return total_xp
+
+    def calculate_level_from_xp(self, xp: int) -> int:
+        """
+        Calculates the level corresponding to a given amount of XP.
+        """
+        level = 0
+        while True:
+            xp_needed = 5 * (level ** 2) + 50 * level + 100
+            if xp >= xp_needed:
+                xp -= xp_needed
+                level += 1
+            else:
+                return level
+
+    def calculate_xp_step(self, level: int) -> int:
+        """Returns the XP required to go from current level to next."""
+        return 5 * (level ** 2) + 50 * level + 100
 
     # --- Public Admin Methods (API) ---
 
@@ -53,18 +67,24 @@ class Levels(commands.Cog):
         """Adds (or removes) XP and returns the new total XP."""
         await self.db.execute("""
             INSERT INTO users (user_id, guild_id, xp, level)
-            VALUES (?, ?, ?, 1)
+            VALUES (?, ?, ?, 0)
             ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = xp + ?
         """, (user_id, guild_id, amount, amount))
         await self.db.commit()
         
         async with self.db.execute("SELECT xp FROM users WHERE user_id = ? AND guild_id = ?", (user_id, guild_id)) as cursor:
             row = await cursor.fetchone()
-            return row['xp'] if row else 0
+            if row:
+                new_xp = row['xp']
+                correct_level = self.calculate_level_from_xp(new_xp)
+                await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, user_id, guild_id))
+                await self.db.commit()
+                return new_xp
+            return 0
 
     async def admin_set_level(self, user_id: int, guild_id: int, level: int):
         """Sets a user's level and resets XP to minimum for that level."""
-        required_xp = self.calculate_xp_requirement(level)
+        required_xp = self.calculate_xp_for_level(level)
             
         await self.db.execute("""
             INSERT INTO users (user_id, guild_id, xp, level)
@@ -97,8 +117,8 @@ class Levels(commands.Cog):
                 row = await cursor.fetchone()
                 if row:
                     new_xp = row['xp']
-                    # Formula: Level = floor(sqrt(XP / 100)) + 1
-                    correct_level = int(math.floor(math.sqrt(new_xp / 100))) + 1
+                    # Formula: MEE6
+                    correct_level = self.calculate_level_from_xp(new_xp)
                     await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, user_id, channel.guild.id))
 
         await self.db.commit()
@@ -247,23 +267,17 @@ class Levels(commands.Cog):
                 current_xp = row['xp']
                 current_level = row['level']
                 
-                # Formula: Check if current XP meets requirement for NEXT level
-                # Quadratic: 100 * (L-1)^2
-                next_level = current_level + 1
-                required_xp = self.calculate_xp_requirement(next_level)
+                # Check actual level based on XP
+                calc_level = self.calculate_level_from_xp(current_xp)
                 
-                if current_xp >= required_xp:
-                    new_level = next_level
-                    await self.db.execute("""
-                        UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?
-                    """, (new_level, message.author.id, message.guild.id))
+                if calc_level > current_level:
+                    await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (calc_level, message.author.id, message.guild.id))
                     await self.db.commit()
                     
-                    # Notify the user
-                    await message.channel.send(f"🎉 {message.author.mention} has leveled up to **Level {new_level}**!")
+                    await message.channel.send(f"🎉 {message.author.mention} has leveled up to **Level {calc_level}**!")
 
                     # Check for Role Rewards
-                    async with self.db.execute("SELECT role_id FROM level_rewards WHERE guild_id = ? AND level = ?", (message.guild.id, new_level)) as cursor:
+                    async with self.db.execute("SELECT role_id FROM level_rewards WHERE guild_id = ? AND level = ?", (message.guild.id, calc_level)) as cursor:
                         reward_row = await cursor.fetchone()
                         if reward_row:
                             role_id = reward_row['role_id']
@@ -302,6 +316,17 @@ class Levels(commands.Cog):
             embed.add_field(name="Level", value=str(level), inline=True)
             embed.add_field(name="Total XP", value=f"{xp} / {next_xp_req} (Next Level)", inline=True)
             embed.set_thumbnail(url=target.avatar.url if target.avatar else None)
+            
+            embed.add_field(name="Level", value=str(level), inline=True)
+            
+            # Clean "XP / Next" display
+            embed.add_field(name="XP", value=f"{xp_in_level} / {next_level_cost}", inline=True)
+            
+            # Progress Bar Field
+            embed.add_field(name="Progress", value=f"`{bar}` {int(progress_percent * 100)}%", inline=False)
+             
+            embed.set_footer(text=f"Total XP: {xp}")
+            
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message(f"❌ {target.display_name} hasn't sent any messages yet!", ephemeral=True)
@@ -424,12 +449,18 @@ class Levels(commands.Cog):
         
         await interaction.response.send_message(f"✅ Set {member.mention} to **Level {level}** (XP set to {required_xp}).", ephemeral=True)
 
-    @level_group.command(name="set_xp_rate", description="Set the XP earned per message")
+    @level_group.command(name="set_xp_rate", description="Set XP per message. Leave empty to reset to default (10).")
     @app_commands.checks.has_permissions(administrator=True)
-    async def set_xp_rate(self, interaction: discord.Interaction, amount: int):
+    async def set_xp_rate(self, interaction: discord.Interaction, amount: int = None):
         """
         Configure how much XP is given per message for this server.
+        If amount is not provided, resets to default (10).
         """
+        if amount is None:
+             await self.set_guild_xp_rate(interaction.guild.id, 10)
+             await interaction.response.send_message("✅ XP Rate **reset** to default (**10 XP** per message).", ephemeral=True)
+             return
+
         if amount < 1:
             await interaction.response.send_message("❌ XP rate must be at least 1.", ephemeral=True)
             return
@@ -481,8 +512,9 @@ class Levels(commands.Cog):
             return
 
         current_xp = row['xp']
-        # Formula: Level = floor(sqrt(XP / 100)) + 1
-        correct_level = int(math.floor(math.sqrt(current_xp / 100))) + 1
+        current_xp = row['xp']
+        # Formula: MEE6
+        correct_level = self.calculate_level_from_xp(current_xp)
 
         await self.db.execute("UPDATE users SET level = ? WHERE user_id = ? AND guild_id = ?", (correct_level, member.id, interaction.guild.id))
         await self.db.commit()
