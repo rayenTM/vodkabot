@@ -12,6 +12,23 @@ class Levels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = None
+        self.cooldowns = {} # user_id -> timestamp
+
+    def get_xp_for_next_level(self, current_level: int) -> int:
+        """
+        Quadratic Formula: 5 * (L^2) + 50 * L + 100
+        L=1 -> 155
+        L=2 -> 220
+        L=10 -> 1100
+        """
+        return 5 * (current_level ** 2) + 50 * current_level + 100
+
+    def get_total_xp_for_level(self, target_level: int) -> int:
+        """Sum of XP needed for all levels up to target_level - 1"""
+        total = 0
+        for i in range(1, target_level):
+            total += self.get_xp_for_next_level(i)
+        return total
 
     # --- Public Admin Methods (API) ---
 
@@ -197,6 +214,15 @@ class Levels(commands.Cog):
         if not message.guild:
             return
 
+        # --- Cooldown Check ---
+        now = time.time()
+        last_xp = self.cooldowns.get(message.author.id, 0)
+        if now - last_xp < 10: # 10 seconds cooldown
+            return
+            
+        self.cooldowns[message.author.id] = now
+        # ----------------------
+
         # 3. Add XP
         # We award customized XP per message (default 10).
         xp_gain = await self.get_guild_xp_rate(message.guild.id)
@@ -268,9 +294,13 @@ class Levels(commands.Cog):
         if row:
             xp = row['xp']
             level = row['level']
+            
+            # Show progress to next level
+            next_xp_req = self.get_xp_for_next_level(level)
+            
             embed = discord.Embed(title=f"Rank: {target.display_name}", color=discord.Color.blue())
             embed.add_field(name="Level", value=str(level), inline=True)
-            embed.add_field(name="Total XP", value=str(xp), inline=True)
+            embed.add_field(name="Total XP", value=f"{xp} / {next_xp_req} (Next Level)", inline=True)
             embed.set_thumbnail(url=target.avatar.url if target.avatar else None)
             await interaction.response.send_message(embed=embed)
         else:
