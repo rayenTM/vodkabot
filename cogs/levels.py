@@ -4,6 +4,7 @@ from discord import app_commands
 import aiosqlite
 import os
 import math
+import time
 
 # Database file path
 DB_FILE = "/app/data/levels.db" if os.path.exists("/app/data") else "./data/levels.db"
@@ -209,9 +210,17 @@ class Levels(commands.Cog):
         await self.db.execute("""
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id INTEGER PRIMARY KEY,
-                xp_rate INTEGER DEFAULT 10
+                xp_rate INTEGER DEFAULT 10,
+                xp_cooldown INTEGER DEFAULT 10
             )
         """)
+
+        # Migration: Add xp_cooldown column if it doesn't exist (for existing DBs)
+        try:
+            await self.db.execute("ALTER TABLE guild_settings ADD COLUMN xp_cooldown INTEGER DEFAULT 10")
+        except Exception:
+            pass # Column likely already exists
+        
         
         await self.db.commit()
         print("Levels Cog: Database connected and table verified.")
@@ -236,8 +245,16 @@ class Levels(commands.Cog):
 
         # --- Cooldown Check ---
         now = time.time()
+        
+        # Fetch guild cooldown setting
+        xp_cooldown = 10 # Default
+        async with self.db.execute("SELECT xp_cooldown FROM guild_settings WHERE guild_id = ?", (message.guild.id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and row['xp_cooldown'] is not None:
+                xp_cooldown = row['xp_cooldown']
+
         last_xp = self.cooldowns.get(message.author.id, 0)
-        if now - last_xp < 10: # 10 seconds cooldown
+        if now - last_xp < xp_cooldown:
             return
             
         self.cooldowns[message.author.id] = now
@@ -310,22 +327,36 @@ class Levels(commands.Cog):
             level = row['level']
             
             # Show progress to next level
-            next_xp_req = self.get_xp_for_next_level(level)
+            # Calculate XP needed for NEXT level (step cost)
+            step_cost = self.get_xp_for_next_level(level)
+            
+            # Calculate Total XP at start of current level
+            current_level_start_xp = self.get_total_xp_for_level(level)
+            
+            # Calculate XP gained WITHIN this level
+            xp_in_this_level = xp - current_level_start_xp
+            
+            # Progress Bar Calculation
+            # Constraint: 0 <= percent <= 1
+            if step_cost > 0:
+                progress_percent = min(max(xp_in_this_level / step_cost, 0), 1)
+            else:
+                progress_percent = 1.0
+
+            bar_length = 15
+            filled_length = int(bar_length * progress_percent)
+            bar = "█" * filled_length + "░" * (bar_length - filled_length)
             
             embed = discord.Embed(title=f"Rank: {target.display_name}", color=discord.Color.blue())
-            embed.add_field(name="Level", value=str(level), inline=True)
-            embed.add_field(name="Total XP", value=f"{xp} / {next_xp_req} (Next Level)", inline=True)
             embed.set_thumbnail(url=target.avatar.url if target.avatar else None)
             
             embed.add_field(name="Level", value=str(level), inline=True)
-            
-            # Clean "XP / Next" display
-            embed.add_field(name="XP", value=f"{xp_in_level} / {next_level_cost}", inline=True)
+            embed.add_field(name="XP Progress", value=f"{xp_in_this_level} / {step_cost}", inline=True)
             
             # Progress Bar Field
             embed.add_field(name="Progress", value=f"`{bar}` {int(progress_percent * 100)}%", inline=False)
              
-            embed.set_footer(text=f"Total XP: {xp}")
+            embed.set_footer(text=f"Total Lifetime XP: {xp}")
             
             await interaction.response.send_message(embed=embed)
         else:
@@ -467,6 +498,25 @@ class Levels(commands.Cog):
 
         await self.set_guild_xp_rate(interaction.guild.id, amount)
         await interaction.response.send_message(f"✅ XP Rate set to **{amount} XP** per message.", ephemeral=True)
+
+    @level_group.command(name="set_cooldown", description="Set XP cooldown in seconds. Default 10.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_cooldown(self, interaction: discord.Interaction, seconds: int = 10):
+        """
+        Configure the cooldown between XP gains (in seconds).
+        """
+        if seconds < 0:
+            await interaction.response.send_message("❌ Cooldown cannot be negative.", ephemeral=True)
+            return
+
+        await self.db.execute("""
+            INSERT INTO guild_settings (guild_id, xp_rate, xp_cooldown)
+            VALUES (?, 10, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET xp_cooldown = ?
+        """, (interaction.guild.id, seconds, seconds))
+        await self.db.commit()
+        
+        await interaction.response.send_message(f"✅ XP Cooldown set to **{seconds} seconds**.", ephemeral=True)
 
     @level_group.command(name="reset", description="Reset a user's XP to the base requirement for their current level")
     @app_commands.checks.has_permissions(administrator=True)
