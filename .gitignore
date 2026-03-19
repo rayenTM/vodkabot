@@ -18,3 +18,12 @@ notes.txt
 
 # Ignore docs directory
 docs/
+
+# COGS
+cogs/llm.py
+cogs/blackjack.py
+cogs/replies.py
+
+# Claude
+.claude/
+
